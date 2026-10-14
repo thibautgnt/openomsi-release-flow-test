@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 - 2026-10-14
+
+### New
+- **Beta two feature**.
+
 ## 0.2.1 - 2026-10-14
 
 ### Fixes
