@@ -29,7 +29,7 @@ jobs:
       - name: Promote v${{ inputs.version }}
         run: |
           case "$VERSION" in
-            ''|*[!0-9.]*) echo "::error::$VERSION is not a version like 0.2.55"; exit 1 ;;
+            ''|*[!0-9.]*) echo "::error::the version is a number like 0.2.55"; exit 1 ;;
           esac
           state=$(gh release view "v$VERSION" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"' 2>/dev/null || true)
           if [ "$state" != "false true" ]; then
