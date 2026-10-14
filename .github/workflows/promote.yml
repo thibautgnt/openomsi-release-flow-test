@@ -36,6 +36,27 @@ jobs:
             echo "::error::v$VERSION is not a published beta"
             exit 1
           fi
+          if ! git merge-base --is-ancestor "v$VERSION" origin/main; then
+            echo "::error::v$VERSION is not a commit of main"
+            exit 1
+          fi
+          files=$(gh release view "v$VERSION" --json assets --jq '.assets[].name')
+          for f in windows-x64.zip windows-arm64.zip macos-arm64.zip macos-x64.zip linux-x64.zip linux-arm64.zip android-arm64.apk server-linux-x64.zip server-linux-arm64.zip server-windows-x64.zip server-windows-arm64.zip; do
+            if ! printf '%s\n' "$files" | grep -qx "openOMSI-$VERSION-$f"; then
+              echo "::error::v$VERSION has no openOMSI-$VERSION-$f: only a beta of every platform can be promoted"
+              exit 1
+            fi
+          done
+          for f in openOMSI-android.apk SHA256SUMS; do
+            if ! printf '%s\n' "$files" | grep -qx "$f"; then
+              echo "::error::v$VERSION has no $f"
+              exit 1
+            fi
+          done
+          if jq -e --arg v "$VERSION" '.bad | index($v)' release/health.json >/dev/null; then
+            echo "::error::v$VERSION is listed as broken in release/health.json"
+            exit 1
+          fi
           stable=$(gh release view --json tagName --jq .tagName)
           stable=${stable#v}
           if [ "$(printf '%s\n%s\n' "$stable" "$VERSION" | sort -V | tail -1)" != "$VERSION" ] || [ "$stable" = "$VERSION" ]; then
