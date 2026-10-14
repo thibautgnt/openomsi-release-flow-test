@@ -153,6 +153,9 @@ jobs:
       - name: Publish v${{ needs.version.outputs.version }} (beta)
         run: |
           ls -l out
+          if [ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "v$VERSION" --yes
+          fi
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "::error::v$VERSION is already published and stays as it is: a fix is released as a new version"
             exit 1

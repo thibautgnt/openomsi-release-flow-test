@@ -53,7 +53,7 @@ jobs:
               exit 1
             fi
           done
-          if jq -e --arg v "$VERSION" '.bad | index($v)' release/health.json >/dev/null; then
+          if jq -e --arg v "$VERSION" 'any(.bad[]? | strings; (gsub("^\\s+|\\s+$"; "") | sub("^[vV]+"; "")) == $v)' release/health.json >/dev/null; then
             echo "::error::v$VERSION is listed as broken in release/health.json"
             exit 1
           fi
