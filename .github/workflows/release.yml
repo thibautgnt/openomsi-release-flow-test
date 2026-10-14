@@ -1,0 +1,173 @@
+# Builds openOMSI for Windows and Linux (x64, ARM64), macOS (Apple silicon, Intel) and Android
+# (plus the dedicated server for Linux and Windows) on every push to
+# main and publishes them as the beta (pre-release) v<MAJOR.MINOR.COMMIT>; promote.yml makes a
+# tested beta the stable release. See docs/VERSIONING.md.
+# Pull requests run the same builds without publishing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    # (a release of one platform alone: a fix only that platform needs, out sooner; a
+    # published release keeps its files, so the others never join it)
+    inputs:
+      only:
+        description: Platform to build and release alone
+        type: choice
+        default: all
+        options: [all, windows, macos, linux, android]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The builds (and the actions they use) only read the repository; `release` alone writes,
+# with its own permission below.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # a pull request's test build says which pull request it is: 0.1.1313-pr1192 (the
+      # launcher shows it, and the updater leaves such a build alone)
+      - id: v
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: echo "version=$(sh scripts/version.sh)${PR:+-pr$PR}" >> "$GITHUB_OUTPUT"
+      - run: echo "### openOMSI ${{ steps.v.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'windows' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - run: |
+          mkdir out
+          echo "windows $V ${{ matrix.arch }} $GITHUB_SHA" > payload.txt
+          for n in openOMSI-VER-windows-ARCH.zip openOMSI-VER-server-windows-ARCH.zip; do cp payload.txt "out/$(echo "$n" | sed "s/VER/$V/; s/ARCH/${{ matrix.arch }}/")"; done
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 1
+          name: windows-${{ matrix.arch }}
+          path: out/*
+
+  macos:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'macos' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [arm64, x64]
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - run: |
+          mkdir out
+          echo "macos $V ${{ matrix.arch }} $GITHUB_SHA" > payload.txt
+          for n in openOMSI-VER-macos-ARCH.zip; do cp payload.txt "out/$(echo "$n" | sed "s/VER/$V/; s/ARCH/${{ matrix.arch }}/")"; done
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 1
+          name: macos-${{ matrix.arch }}
+          path: out/*
+
+  linux:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'linux' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - run: |
+          mkdir out
+          echo "linux $V ${{ matrix.arch }} $GITHUB_SHA" > payload.txt
+          for n in openOMSI-VER-linux-ARCH.zip openOMSI-VER-server-linux-ARCH.zip; do cp payload.txt "out/$(echo "$n" | sed "s/VER/$V/; s/ARCH/${{ matrix.arch }}/")"; done
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 1
+          name: linux-${{ matrix.arch }}
+          path: out/*
+
+  android:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'android' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [arm64]
+    env:
+      V: ${{ needs.version.outputs.version }}
+    steps:
+      - run: |
+          mkdir out
+          echo "android $V ${{ matrix.arch }} $GITHUB_SHA" > payload.txt
+          for n in openOMSI-VER-android-ARCH.apk openOMSI-android.apk; do cp payload.txt "out/$(echo "$n" | sed "s/VER/$V/; s/ARCH/${{ matrix.arch }}/")"; done
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 1
+          name: android-${{ matrix.arch }}
+          path: out/*
+
+  release:
+    # (the platforms not built again are skipped, not failed)
+    if: ${{ !cancelled() && !failure() && github.event_name != 'pull_request' }}
+    needs: [version, windows, macos, linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish v${{ needs.version.outputs.version }} (beta)
+        run: |
+          ls -l out
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is already published and stays as it is: a fix is released as a new version"
+            exit 1
+          fi
+          if ! git tag "v$VERSION" "$GITHUB_SHA" 2>/dev/null && [ "$(git rev-parse "v$VERSION^{commit}")" != "$GITHUB_SHA" ]; then
+            echo "::error::the tag v$VERSION already names another commit"
+            exit 1
+          fi
+          git push origin "v$VERSION"
+          sh scripts/release-notes.sh "$VERSION" > notes.md
+          cd out
+          files=$(ls *.zip *.apk 2>/dev/null || true)
+          sha256sum $files > SHA256SUMS
+          gh release create "v$VERSION" $files SHA256SUMS \
+            --verify-tag \
+            --prerelease \
+            --title "openOMSI $VERSION" \
+            --notes-file ../notes.md
