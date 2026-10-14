@@ -10,8 +10,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    # (a release of one platform alone: a fix only that platform needs, out sooner; a
-    # published release keeps its files, so the others never join it)
+    # (a beta of one platform alone, to test a fix only that platform needs; a published
+    # release keeps its files, so the others never join it, and it cannot be promoted)
     inputs:
       only:
         description: Platform to build and release alone
@@ -134,7 +134,7 @@ jobs:
 
   release:
     # (the platforms not built again are skipped, not failed)
-    if: ${{ !cancelled() && !failure() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && !failure() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     needs: [version, windows, macos, linux, android]
     runs-on: ubuntu-latest
     permissions:
